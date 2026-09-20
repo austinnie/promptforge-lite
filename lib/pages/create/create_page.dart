@@ -298,7 +298,13 @@ class _CreatePageState extends State<CreatePage> {
                   ClipRRect(
                     borderRadius: BorderRadius.circular(8),
                     child: _resultUrl != null
-                        ? Image.network(_resultUrl!, fit: BoxFit.contain)
+
+                        ? Image.network(
+                            _resultUrl!,
+                            fit: BoxFit.contain,
+                            webHtmlElementStrategy:
+                                WebHtmlElementStrategy.prefer,
+                          )						
                         : Image.file(
                             File(_resultPath!),
                             fit: BoxFit.contain,
