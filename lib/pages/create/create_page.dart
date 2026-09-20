@@ -66,6 +66,13 @@ class _CreatePageState extends State<CreatePage> {
     }
   }
 
+  void _clearRef() {
+    setState(() {
+      _refBytes = null;
+      _refName = null;
+    });
+  }
+
   Future<void> _submit() async {
     final prompt = _promptCtrl.text.trim();
     if (prompt.isEmpty) {
@@ -94,7 +101,6 @@ class _CreatePageState extends State<CreatePage> {
       final client = AgnesDirect(cfg);
 
       if (kIsWeb) {
-        // Web：只拿 URL，不下载（避开 CORS）
         if (_mode == _Mode.img2img) {
           throw Exception('Web 端暂不支持图生图，请在手机/桌面端使用');
         }
@@ -113,7 +119,6 @@ class _CreatePageState extends State<CreatePage> {
         return;
       }
 
-      // 非 Web：下载字节 + 存本地
       final Uint8List bytes;
       if (_mode == _Mode.text2img) {
         bytes = await client.generateImage(
@@ -166,7 +171,7 @@ class _CreatePageState extends State<CreatePage> {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        // 模式切换
+        // ---- 模式切换 ----
         SegmentedButton<_Mode>(
           segments: const [
             ButtonSegment(
@@ -191,38 +196,124 @@ class _CreatePageState extends State<CreatePage> {
 
         const SizedBox(height: 16),
 
-        // 参考图（仅图生图）
+        // ---- 参考图（仅图生图模式）----
         if (_mode == _Mode.img2img) ...[
-          _RefCard(
-            bytes: _refBytes,
-            name: _refName,
-            onPick: _pickRef,
-            onClear: () => setState(() {
-              _refBytes = null;
-              _refName = null;
-            }),
+          if (kIsWeb)
+            Container(
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.orange.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.orange.withOpacity(0.4)),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.info_outline, color: Colors.orange, size: 20),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Web 端可选图预览，但提交图生图会被拦截。请用手机端跑图生图。',
+                      style: TextStyle(fontSize: 12),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+          // === 选图卡片 ===
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: _refBytes == null
+                  ? Row(
+                      children: [
+                        const Icon(Icons.image_outlined, color: Colors.grey),
+                        const SizedBox(width: 8),
+                        const Expanded(child: Text('选择参考图（用于图生图）')),
+                        FilledButton.tonal(
+                          onPressed: _pickRef,
+                          child: const Text('选择'),
+                        ),
+                      ],
+                    )
+                  : Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(6),
+                          child: Image.memory(
+                            _refBytes!,
+                            width: 80,
+                            height: 80,
+                            fit: BoxFit.cover,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _refName ?? '参考图',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                                maxLines: 1,
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                '${(_refBytes!.lengthInBytes / 1024).toStringAsFixed(1)} KB',
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Row(
+                                children: [
+                                  TextButton(
+                                    onPressed: _pickRef,
+                                    child: const Text('换一张'),
+                                  ),
+                                  TextButton(
+                                    onPressed: _clearRef,
+                                    child: const Text('清除'),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+            ),
           ),
           const SizedBox(height: 12),
-          Row(
-            children: [
-              const Text('强度：'),
-              Expanded(
-                child: Slider(
-                  value: _strength,
-                  min: 0.1,
-                  max: 1.0,
-                  divisions: 18,
-                  label: _strength.toStringAsFixed(2),
-                  onChanged: (v) => setState(() => _strength = v),
+          SizedBox(
+            height: 48,
+            child: Row(
+              children: [
+                const Text('强度：'),
+                Expanded(
+                  child: Slider(
+                    value: _strength,
+                    min: 0.1,
+                    max: 1.0,
+                    divisions: 18,
+                    label: _strength.toStringAsFixed(2),
+                    onChanged: (v) => setState(() => _strength = v),
+                  ),
                 ),
-              ),
-              Text(_strength.toStringAsFixed(2)),
-            ],
+                Text(_strength.toStringAsFixed(2)),
+              ],
+            ),
           ),
           const SizedBox(height: 12),
         ],
 
-        // 描述
+        // ---- 描述 ----
         TextField(
           controller: _promptCtrl,
           maxLines: 3,
@@ -235,7 +326,7 @@ class _CreatePageState extends State<CreatePage> {
         ),
         const SizedBox(height: 12),
 
-        // 尺寸
+        // ---- 尺寸 ----
         Row(
           children: [
             const Text('尺寸：'),
@@ -259,7 +350,7 @@ class _CreatePageState extends State<CreatePage> {
         ),
         const SizedBox(height: 16),
 
-        // 提交
+        // ---- 提交 ----
         FilledButton.icon(
           onPressed: _busy ? null : _submit,
           icon: _busy
@@ -298,13 +389,12 @@ class _CreatePageState extends State<CreatePage> {
                   ClipRRect(
                     borderRadius: BorderRadius.circular(8),
                     child: _resultUrl != null
-
                         ? Image.network(
                             _resultUrl!,
                             fit: BoxFit.contain,
                             webHtmlElementStrategy:
                                 WebHtmlElementStrategy.prefer,
-                          )						
+                          )
                         : Image.file(
                             File(_resultPath!),
                             fit: BoxFit.contain,
@@ -316,79 +406,6 @@ class _CreatePageState extends State<CreatePage> {
           ),
         ],
       ],
-    );
-  }
-}
-
-class _RefCard extends StatelessWidget {
-  final Uint8List? bytes;
-  final String? name;
-  final VoidCallback onPick;
-  final VoidCallback onClear;
-
-  const _RefCard({
-    required this.bytes,
-    required this.name,
-    required this.onPick,
-    required this.onClear,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    if (bytes == null) {
-      return Card(
-        child: ListTile(
-          leading: const Icon(Icons.image_outlined),
-          title: const Text('选择参考图'),
-          trailing: FilledButton.tonal(
-            onPressed: onPick,
-            child: const Text('选择'),
-          ),
-        ),
-      );
-    }
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Row(
-          children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(6),
-              child: Image.memory(
-                bytes!,
-                width: 70,
-                height: 70,
-                fit: BoxFit.cover,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    name ?? '参考图',
-                    style: const TextStyle(fontWeight: FontWeight.w600),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '${(bytes!.lengthInBytes / 1024).toStringAsFixed(1)} KB',
-                    style: const TextStyle(fontSize: 12, color: Colors.grey),
-                  ),
-                  Row(
-                    children: [
-                      TextButton(onPressed: onPick, child: const Text('换一张')),
-                      TextButton(onPressed: onClear, child: const Text('清除')),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }
