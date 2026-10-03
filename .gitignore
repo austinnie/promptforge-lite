@@ -5,7 +5,6 @@
 *.swp
 .DS_Store
 .atom/
-.build/
 .buildlog/
 .history
 .svn/
@@ -27,10 +26,30 @@ migrate_working_dir/
 **/doc/api/
 **/ios/Flutter/.last_build_id
 .dart_tool/
+/build/
+.flutter-plugin
 .flutter-plugins-dependencies
+
+
+# Android
+android/.gradle/
+android/app/build/
+android/local.properties
+
+
+
+# IDE
+.idea/
+*.iml
+
+
+# OS
+.DS_Store
+Thumbs.db
+
 .pub-cache/
 .pub/
-/build/
+
 /coverage/
 
 # Symbolication related
