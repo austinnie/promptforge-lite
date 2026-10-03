@@ -144,6 +144,7 @@ class _CreatePageState extends State<CreatePage> {
       final ts = DateTime.now().millisecondsSinceEpoch;
       final file = File('${galleryDir.path}/$ts.png');
       await file.writeAsBytes(bytes);
+	  print('🔥 图片已保存到: ${file.path}');
 
       final metaFile = File('${galleryDir.path}/$ts.json');
       await metaFile.writeAsString(
