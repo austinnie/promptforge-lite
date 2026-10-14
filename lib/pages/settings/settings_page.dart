@@ -1,77 +1,71 @@
-// lib/pages/settings/settings_page.dart
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../services/agnes_config.dart';
-import '../../services/agnes_direct.dart';
+import '../providers/config_provider.dart';
+import '../services/agnes_direct.dart';
 
-class SettingsPage extends StatefulWidget {
+class SettingsPage extends ConsumerWidget {
   const SettingsPage({super.key});
 
   @override
-  State<SettingsPage> createState() => _SettingsPageState();
-}
-
-class _SettingsPageState extends State<SettingsPage> {
-  final _keyCtrl = TextEditingController();
-  final _urlCtrl = TextEditingController();
-  final _modelCtrl = TextEditingController();
-
-  bool _loading = true;
-  bool _testing = false;
-  String? _status;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    final c = await AgnesConfig.load();
-    if (!mounted) return;
-    setState(() {
-      _keyCtrl.text = c.apiKey;
-      _urlCtrl.text = c.baseUrl;
-      _modelCtrl.text = c.imageModel;
-      _loading = false;
-    });
-  }
-
-  Future<void> _save() async {
-    final c = AgnesConfig(
-      apiKey: _keyCtrl.text.trim(),
-      baseUrl: _urlCtrl.text.trim().isEmpty
-          ? AgnesConfig.defaultBaseUrl
-          : _urlCtrl.text.trim(),
-      imageModel: _modelCtrl.text.trim().isEmpty
-          ? AgnesConfig.defaultImageModel
-          : _modelCtrl.text.trim(),
+  Widget build(BuildContext context, WidgetRef ref) {
+    final config = ref.watch(configProvider);
+    final isTesting = ref.watch(_testingProvider);
+    
+    return _SettingsContent(
+      config: config,
+      isTesting: isTesting,
+      onTest: () => _testConnection(context, ref),
+      onSave: () => _saveConfig(ref),
     );
-    await c.save();
-    if (!mounted) return;
+  }
+
+  Future<void> _testConnection(BuildContext context, WidgetRef ref) async {
+    ref.read(_testingProvider.notifier).state = true;
+    final ok = await AgnesDirect(ref.read(agnesConfigProvider)).ping();
+    ref.read(_testingProvider.notifier).state = false;
+    
+    if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(ok ? '✅ 连接成功' : '❌ 连接失败，请检查 API Key'),
+        backgroundColor: ok ? Colors.green : Colors.red,
+      ),
+    );
+  }
+
+  Future<void> _saveConfig(WidgetRef ref) async {
+    await ref.read(configProvider.notifier).save();
+    if (!ref.context.mounted) return;
+    ScaffoldMessenger.of(ref.context).showSnackBar(
       const SnackBar(content: Text('已保存')),
     );
-    setState(() => _status = null);
   }
+}
 
-  Future<void> _test() async {
-    // 先保存再测
-    await _save();
-    final c = await AgnesConfig.load();
-    if (!mounted) return;
-    setState(() {
-      _testing = true;
-      _status = null;
-    });
+final _testingProvider = StateProvider<bool>((ref) => false);
 
-    final ok = await AgnesDirect(c).ping();
-    if (!mounted) return;
-    setState(() {
-      _testing = false;
-      _status = ok ? '✅ Key 有效' : '❌ 连接失败，请检查 key / base_url';
-    });
-  }
+class _SettingsContent extends StatefulWidget {
+  final ConfigNotifier config;
+  final bool isTesting;
+  final VoidCallback onTest;
+  final VoidCallback onSave;
+
+  const _SettingsContent({
+    required this.config,
+    required this.isTesting,
+    required this.onTest,
+    required this.onSave,
+  });
+
+  @override
+  State<_SettingsContent> createState() => _SettingsContentState();
+}
+
+class _SettingsContentState extends State<_SettingsContent> {
+  late final _keyCtrl = TextEditingController(text: widget.config.apiKey);
+  late final _urlCtrl = TextEditingController(text: widget.config.baseUrl);
+  late final _modelCtrl = TextEditingController(text: widget.config.imageModel);
 
   @override
   void dispose() {
@@ -83,10 +77,6 @@ class _SettingsPageState extends State<SettingsPage> {
 
   @override
   Widget build(BuildContext context) {
-    if (_loading) {
-      return const Center(child: CircularProgressIndicator());
-    }
-
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -116,7 +106,7 @@ class _SettingsPageState extends State<SettingsPage> {
           controller: _urlCtrl,
           decoration: const InputDecoration(
             labelText: 'Base URL',
-            hintText: AgnesConfig.defaultBaseUrl,
+            hintText: 'https://apihub.agnes-ai.com/v1',
             prefixIcon: Icon(Icons.link),
           ),
         ),
@@ -126,7 +116,7 @@ class _SettingsPageState extends State<SettingsPage> {
           controller: _modelCtrl,
           decoration: const InputDecoration(
             labelText: '图像模型',
-            hintText: AgnesConfig.defaultImageModel,
+            hintText: 'agnes-image-2.1-flash',
             prefixIcon: Icon(Icons.memory),
           ),
         ),
@@ -136,35 +126,24 @@ class _SettingsPageState extends State<SettingsPage> {
           children: [
             Expanded(
               child: FilledButton.icon(
-                onPressed: _testing ? null : _test,
-                icon: _testing
+                onPressed: widget.isTesting ? null : widget.onTest,
+                icon: widget.isTesting
                     ? const SizedBox(
                         width: 16,
                         height: 16,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Icon(Icons.wifi_tethering),
-                label: Text(_testing ? '测试中…' : '保存并测试'),
+                label: Text(widget.isTesting ? '测试中…' : '保存并测试'),
               ),
             ),
             const SizedBox(width: 12),
             OutlinedButton(
-              onPressed: _testing ? null : _save,
+              onPressed: widget.isTesting ? null : widget.onSave,
               child: const Text('仅保存'),
             ),
           ],
         ),
-
-        if (_status != null) ...[
-          const SizedBox(height: 16),
-          Text(
-            _status!,
-            style: TextStyle(
-              fontSize: 14,
-              color: _status!.startsWith('✅') ? Colors.green : Colors.red,
-            ),
-          ),
-        ],
 
         const SizedBox(height: 32),
         const Divider(),

@@ -1,42 +1,52 @@
-// lib/pages/create/create_page.dart
-import 'dart:io';
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'dart:io';
 
-import '../../core/app_config.dart';
-import '../../services/agnes_config.dart';
-import '../../services/agnes_direct.dart';
+import '../core/app_config.dart';
+import '../providers/config_provider.dart';
+import '../providers/generation_provider.dart';
 
 enum _Mode { text2img, img2img }
 
-class CreatePage extends StatefulWidget {
+class CreatePage extends ConsumerWidget {
   const CreatePage({super.key});
 
   @override
-  State<CreatePage> createState() => _CreatePageState();
+  Widget build(BuildContext context, WidgetRef ref) {
+    final config = ref.watch(configProvider);
+    final generation = ref.watch(generationProvider);
+    
+    return _CreatePageContent(
+      config: config,
+      generation: generation,
+    );
+  }
 }
 
-class _CreatePageState extends State<CreatePage> {
+class _CreatePageContent extends StatefulWidget {
+  final ConfigNotifier config;
+  final GenerationNotifier generation;
+
+  const _CreatePageContent({
+    required this.config,
+    required this.generation,
+  });
+
+  @override
+  State<_CreatePageContent> createState() => _CreatePageContentState();
+}
+
+class _CreatePageContentState extends State<_CreatePageContent> {
   final _promptCtrl = TextEditingController();
   int _width = 1024;
   int _height = 1024;
   _Mode _mode = _Mode.text2img;
 
-  // 图生图
   Uint8List? _refBytes;
   String? _refName;
   double _strength = 0.7;
-
-  bool _busy = false;
-  String? _msg;
-  String? _resultPath;
-  String? _resultUrl;
-
-  final _picker = ImagePicker();
 
   @override
   void dispose() {
@@ -46,7 +56,8 @@ class _CreatePageState extends State<CreatePage> {
 
   Future<void> _pickRef() async {
     try {
-      final x = await _picker.pickImage(
+      final picker = ImagePicker();
+      final x = await picker.pickImage(
         source: ImageSource.gallery,
         maxWidth: 1536,
         maxHeight: 1536,
@@ -58,11 +69,12 @@ class _CreatePageState extends State<CreatePage> {
       setState(() {
         _refBytes = bytes;
         _refName = x.name;
-        _msg = null;
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _msg = '选择图片失败: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('选择图片失败: $e')),
+      );
     }
   }
 
@@ -76,99 +88,74 @@ class _CreatePageState extends State<CreatePage> {
   Future<void> _submit() async {
     final prompt = _promptCtrl.text.trim();
     if (prompt.isEmpty) {
-      setState(() => _msg = '请输入描述');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请输入描述')),
+      );
       return;
     }
     if (_mode == _Mode.img2img && _refBytes == null) {
-      setState(() => _msg = '请先选择参考图');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请先选择参考图')),
+      );
       return;
     }
-
-    final cfg = await AgnesConfig.load();
-    if (!cfg.isReady) {
-      setState(() => _msg = '请先到「设置」里填 Agnes API Key');
+    if (!widget.config.isReady) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请先到「设置」里填写 API Key')),
+      );
       return;
     }
-
-    setState(() {
-      _busy = true;
-      _msg = null;
-      _resultPath = null;
-      _resultUrl = null;
-    });
 
     try {
-      final client = AgnesDirect(cfg);
-
       if (kIsWeb) {
         if (_mode == _Mode.img2img) {
-          throw Exception('Web 端暂不支持图生图，请在手机/桌面端使用');
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Web 端暂不支持图生图，请在手机/桌面端使用'),
+            ),
+          );
+          return;
         }
-        final url = await client.generateImageUrl(
+        await widget.generation.generateImageUrl(
           prompt: prompt,
           width: _width,
           height: _height,
+          config: widget.config,
         );
-        if (!mounted) return;
-        setState(() {
-          _busy = false;
-          _msg = '生成完成';
-          _resultUrl = url;
-        });
-        _promptCtrl.clear();
+        if (mounted) _promptCtrl.clear();
         return;
       }
 
-      final Uint8List bytes;
       if (_mode == _Mode.text2img) {
-        bytes = await client.generateImage(
+        await widget.generation.generateTextToImage(
           prompt: prompt,
           width: _width,
           height: _height,
+          config: widget.config,
         );
       } else {
-        bytes = await client.imageToImage(
+        await widget.generation.generateImageToImage(
           prompt: prompt,
           imageBytes: _refBytes!,
           strength: _strength,
           width: _width,
           height: _height,
+          config: widget.config,
         );
       }
-
-      final dir = await getApplicationDocumentsDirectory();
-      final galleryDir = Directory('${dir.path}/${AppConfig.galleryDirName}');
-      if (!galleryDir.existsSync()) {
-        galleryDir.createSync(recursive: true);
-      }
-      final ts = DateTime.now().millisecondsSinceEpoch;
-      final file = File('${galleryDir.path}/$ts.png');
-      await file.writeAsBytes(bytes);
-	  print('🔥 图片已保存到: ${file.path}');
-
-      final metaFile = File('${galleryDir.path}/$ts.json');
-      await metaFile.writeAsString(
-        '{"prompt":"${prompt.replaceAll('"', r'\"')}","width":$_width,"height":$_height,"mode":"${_mode.name}","ts":$ts}',
-      );
-
-      if (!mounted) return;
-      setState(() {
-        _busy = false;
-        _msg = '生成完成';
-        _resultPath = file.path;
-      });
-      _promptCtrl.clear();
+      if (mounted) _promptCtrl.clear();
     } catch (e) {
       if (!mounted) return;
-      setState(() {
-        _busy = false;
-        _msg = '$e';
-      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('生成失败: $e')),
+      );
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final generation = widget.generation;
+    
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -188,10 +175,7 @@ class _CreatePageState extends State<CreatePage> {
           ],
           selected: {_mode},
           onSelectionChanged: (s) {
-            setState(() {
-              _mode = s.first;
-              _msg = null;
-            });
+            setState(() => _mode = s.first);
           },
         ),
 
@@ -222,7 +206,6 @@ class _CreatePageState extends State<CreatePage> {
               ),
             ),
 
-          // === 选图卡片 ===
           Card(
             child: Padding(
               padding: const EdgeInsets.all(12),
@@ -351,62 +334,194 @@ class _CreatePageState extends State<CreatePage> {
         ),
         const SizedBox(height: 16),
 
-        // ---- 提交 ----
+        // ---- 提交按钮 ----
         FilledButton.icon(
-          onPressed: _busy ? null : _submit,
-          icon: _busy
+          onPressed: generation.state == GenerationState.loading ? null : _submit,
+          icon: generation.state == GenerationState.loading
               ? const SizedBox(
                   width: 18,
                   height: 18,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
               : const Icon(Icons.send),
-          label: Text(_busy ? '生成中…' : '提交生成'),
+          label: Text(
+            generation.state == GenerationState.loading ? '生成中…' : '提交生成',
+          ),
         ),
 
-        if (_msg != null) ...[
-          const SizedBox(height: 12),
-          Text(
-            _msg!,
-            style: TextStyle(
-              color: _msg == '生成完成' ? Colors.green : Colors.red,
+        const SizedBox(height: 16),
+
+        // ---- 加载状态提示 ----
+        if (generation.state == GenerationState.loading)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.primaryContainer,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              children: [
+                const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Text(
+                    '正在生成图片，请稍候……',
+                    style: TextStyle(fontSize: 14),
+                  ),
+                ),
+              ],
             ),
           ),
-        ],
 
-        if (_resultPath != null || _resultUrl != null) ...[
-          const SizedBox(height: 20),
+        // ---- 结果展示 ----
+        if (generation.lastResult != null && generation.state != GenerationState.loading) ...[
           Card(
             child: Padding(
               padding: const EdgeInsets.all(12),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const Text(
-                    '生成结果',
-                    style: TextStyle(fontWeight: FontWeight.bold),
+                  Row(
+                    children: [
+                      const Icon(Icons.check_circle, color: Colors.green),
+                      const SizedBox(width: 8),
+                      const Text(
+                        '生成完成',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 8),
+                  Text(
+                    generation.lastResult!.prompt,
+                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 12),
                   ClipRRect(
                     borderRadius: BorderRadius.circular(8),
-                    child: _resultUrl != null
-                        ? Image.network(
-                            _resultUrl!,
-                            fit: BoxFit.contain,
-                            webHtmlElementStrategy:
-                                WebHtmlElementStrategy.prefer,
-                          )
-                        : Image.file(
-                            File(_resultPath!),
-                            fit: BoxFit.contain,
-                          ),
+                    child: generation.lastResult!.url != null
+                        ? _SafeNetworkImage(url: generation.lastResult!.url!)
+                        : generation.lastResult!.localPath != null
+                            ? Image.file(
+                                File(generation.lastResult!.localPath!),
+                                fit: BoxFit.contain,
+                              )
+                            : const SizedBox(
+                                height: 200,
+                                child: Center(
+                                  child: CircularProgressIndicator(),
+                                ),
+                              ),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      Text(
+                        '${generation.lastResult!.width} × ${generation.lastResult!.height}',
+                        style: const TextStyle(fontSize: 12, color: Colors.grey),
+                      ),
+                      Text(
+                        generation.lastResult!.timestamp.toString().substring(0, 16),
+                        style: const TextStyle(fontSize: 12, color: Colors.grey),
+                      ),
+                    ],
                   ),
                 ],
               ),
             ),
           ),
         ],
+
+        if (generation.state == GenerationState.error) ...[
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.red.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.red.withOpacity(0.3)),
+            ),
+            child: const Row(
+              children: [
+                Icon(Icons.error_outline, color: Colors.red),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '生成失败，请稍后重试',
+                    style: TextStyle(color: Colors.red),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ],
+    );
+  }
+}
+
+/// 安全的网络图片组件，避免 inactive element 断言错误
+class _SafeNetworkImage extends StatefulWidget {
+  final String url;
+
+  const _SafeNetworkImage({required this.url});
+
+  @override
+  State<_SafeNetworkImage> createState() => _SafeNetworkImageState();
+}
+
+class _SafeNetworkImageState extends State<_SafeNetworkImage> {
+  bool _loaded = false;
+  bool _error = false;
+
+  @override
+  Widget build(BuildContext context) {
+    if (_error) {
+      return Container(
+        height: 200,
+        color: Colors.grey[200],
+        child: const Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.broken_image, color: Colors.grey, size: 40),
+              SizedBox(height: 8),
+              Text('图片加载失败', style: TextStyle(color: Colors.grey)),
+            ],
+          ),
+        ),
+      );
+    }
+    return Image.network(
+      widget.url,
+      fit: BoxFit.contain,
+      loadingBuilder: (context, child, progress) {
+        if (progress == null) {
+          if (!mounted) return child;
+          setState(() => _loaded = true);
+          return child;
+        }
+        if (!mounted) return const SizedBox.shrink();
+        return Center(
+          child: CircularProgressIndicator(
+            value: progress.expectedTotalBytes != null
+                ? progress.cumulativeBytesLoaded / progress.expectedTotalBytes!
+                : null,
+          ),
+        );
+      },
+      errorBuilder: (context, error, stackTrace) {
+        if (!mounted) return const SizedBox.shrink();
+        setState(() => _error = true);
+        return const SizedBox.shrink();
+      },
     );
   }
 }
